@@ -46,10 +46,9 @@ jobs:
           token: ${{ secrets.DSTL8_API_TOKEN }}
 ```
 
-The API URL is the address you use for your org's Dstl8 API. Most orgs are
-`https://<org>.app.dstl8.ai`. If your org lives elsewhere (for example
-`https://<org>.wd.dstl8.ai`), use that host. A wrong host returns an HTML 404,
-not an auth error.
+The API URL is your org's Dstl8 API address, `https://<org>.app.dstl8.ai`.
+A wrong host returns an HTML 404, not an auth error, so check it first if
+pushes fail.
 
 ## Inputs
 
