@@ -1,0 +1,229 @@
+name: dstl8 code graph push
+description: >
+  Extract your repository's code graph (log sites, symbols, services — metadata
+  only, never source) with the dstl8 CLI and push it to your Dstl8 org.
+author: ControlTheory
+branding:
+  icon: share-2
+  color: purple
+
+inputs:
+  api-url:
+    description: >
+      Your org's API base URL, e.g. https://acme.app.dstl8.ai (orgs on the
+      watchdog cluster use https://<org>.wd.dstl8.ai). Not needed with dry-run.
+    required: false
+    default: ""
+  token:
+    description: A dstl8_ API token (Org Settings -> API Tokens). Store it as a secret. Not needed with dry-run.
+    required: false
+    default: ""
+  version:
+    description: dstl8 CLI release to use, e.g. v0.2.10. "latest" resolves the newest release at run time.
+    required: false
+    default: latest
+  path:
+    description: Directory to extract, for monorepos whose graph root is not the repo root.
+    required: false
+    default: "."
+  extra-args:
+    description: >
+      Extra arguments for `dstl8 graph push` (or `graph build` with dry-run),
+      shell-quoted, e.g. --exclude 'gen/**' --service api='cmd/api/**'.
+    required: false
+    default: ""
+  dry-run:
+    description: >
+      "true" builds the graph to a local JSON file (output artifact-path) and
+      uploads nothing. Needs no api-url or token — use it to audit exactly what
+      would be sent.
+    required: false
+    default: "false"
+  fail-on-error:
+    description: >
+      "true" fails the job when the push cannot complete. The default "false"
+      emits a warning and lets the job pass, so code graph never blocks a build.
+    required: false
+    default: "false"
+  label:
+    description: Name shown in log lines, useful when one job pushes to several orgs.
+    required: false
+    default: ""
+  github-token:
+    description: Token used only to resolve the "latest" CLI release without hitting anonymous GitHub API rate limits.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  status:
+    description: One of pushed, refreshed, unchanged, skipped, dry-run, failed.
+    value: ${{ steps.graph.outputs.status }}
+  repo:
+    description: Repository key as Dstl8 records it, e.g. github.com/acme/checkout.
+    value: ${{ steps.graph.outputs.repo }}
+  commit-sha:
+    description: Commit the snapshot was taken at.
+    value: ${{ steps.graph.outputs.commit-sha }}
+  cli-version:
+    description: dstl8 CLI release that ran.
+    value: ${{ steps.graph.outputs.cli-version }}
+  artifact-path:
+    description: Path of the built graph JSON (dry-run only).
+    value: ${{ steps.graph.outputs.artifact-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: dstl8 code graph
+      id: graph
+      shell: bash
+      env:
+        DSTL8_API_URL: ${{ inputs.api-url }}
+        DSTL8_API_TOKEN: ${{ inputs.token }}
+        IN_VERSION: ${{ inputs.version }}
+        IN_PATH: ${{ inputs.path }}
+        IN_EXTRA: ${{ inputs.extra-args }}
+        IN_DRY_RUN: ${{ inputs.dry-run }}
+        IN_FAIL: ${{ inputs.fail-on-error }}
+        IN_LABEL: ${{ inputs.label }}
+        IN_GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -u
+        set -f
+        REPO_SLUG="control-theory/dstl8"
+        label="${IN_LABEL:+ [${IN_LABEL}]}"
+
+        out() { echo "$1=$2" >> "${GITHUB_OUTPUT}"; }
+        bail() {
+          out status failed
+          if [ "${IN_FAIL}" = "true" ]; then
+            echo "::error::dstl8-codegraph${label}: $*"
+            exit 1
+          fi
+          echo "::warning::dstl8-codegraph${label}: $*"
+          exit 0
+        }
+
+        [ -n "${DSTL8_API_TOKEN}" ] && echo "::add-mask::${DSTL8_API_TOKEN}"
+
+        dry_run=false
+        [ "${IN_DRY_RUN}" = "true" ] && dry_run=true
+        if [ "${dry_run}" = "false" ] && { [ -z "${DSTL8_API_URL}" ] || [ -z "${DSTL8_API_TOKEN}" ]; }; then
+          bail "api-url or token is empty, nothing pushed. Check the workflow variable and secret are set."
+        fi
+
+        # Honor shell quoting in extra-args (e.g. --exclude 'gen/**').
+        extra=()
+        eval "extra=(${IN_EXTRA})" || bail "could not parse extra-args: ${IN_EXTRA}"
+
+        case "$(uname -s)" in
+          Linux)  os=linux ;;
+          Darwin) os=darwin ;;
+          *)      bail "unsupported runner OS $(uname -s); use a Linux or macOS runner" ;;
+        esac
+        case "$(uname -m)" in
+          x86_64|amd64)  arch=amd64 ;;
+          aarch64|arm64) arch=arm64 ;;
+          *)             bail "unsupported runner architecture $(uname -m)" ;;
+        esac
+        if command -v sha256sum >/dev/null 2>&1; then
+          sumcheck() { sha256sum -c "$1"; }
+        elif command -v shasum >/dev/null 2>&1; then
+          sumcheck() { shasum -a 256 -c "$1"; }
+        else
+          bail "neither sha256sum nor shasum is available to verify the CLI download"
+        fi
+
+        latest_url="https://api.github.com/repos/${REPO_SLUG}/releases/latest"
+        if [ "${IN_VERSION}" = "latest" ]; then
+          meta=""
+          if [ -n "${IN_GH_TOKEN}" ]; then
+            meta="$(curl -fsS --max-time 20 -H "Authorization: Bearer ${IN_GH_TOKEN}" "${latest_url}" 2>/dev/null)" || meta=""
+          fi
+          # Fall back to anonymous (e.g. GHES, where github.token is not valid on github.com).
+          [ -n "${meta}" ] || meta="$(curl -fsS --max-time 20 "${latest_url}")" \
+            || bail "could not resolve the latest dstl8 CLI release"
+          tag="$(printf '%s' "${meta}" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
+        else
+          case "${IN_VERSION}" in
+            v*) tag="${IN_VERSION}" ;;
+            *)  tag="v${IN_VERSION}" ;;
+          esac
+        fi
+        [ -n "${tag}" ] || bail "empty dstl8 CLI release tag"
+        ver="${tag#v}"
+        out cli-version "${tag}"
+
+        work="$(mktemp -d "${RUNNER_TEMP:-/tmp}/dstl8.XXXXXX")"
+        base="https://github.com/${REPO_SLUG}/releases/download/${tag}"
+        asset="dstl8_${ver}_${os}_${arch}.tar.gz"
+
+        curl -fsSL --max-time 120 -o "${work}/${asset}" "${base}/${asset}" \
+          || bail "download failed: ${base}/${asset}"
+        curl -fsSL --max-time 30 -o "${work}/SHA256SUMS" "${base}/SHA256SUMS" \
+          || bail "download failed: ${base}/SHA256SUMS"
+        # Verify against the release's own SHA256SUMS, matching only our asset.
+        if ! ( cd "${work}" && grep " ${asset}\$" SHA256SUMS > asset.sha256 \
+               && sumcheck asset.sha256 >/dev/null 2>&1 ); then
+          bail "checksum verification failed for ${asset}"
+        fi
+        tar -xzf "${work}/${asset}" -C "${work}" || bail "could not unpack ${asset}"
+        bin="$(find "${work}" -type f -name dstl8 -perm -u+x | head -1)"
+        [ -n "${bin}" ] || bail "no dstl8 binary in ${asset}"
+
+        [ -d "${IN_PATH}" ] || bail "path ${IN_PATH} does not exist (did you run actions/checkout?)"
+
+        if [ "${dry_run}" = "true" ]; then
+          echo "dstl8-codegraph${label}: ${tag} (${os}/${arch}) dry run, nothing will be uploaded"
+          artifact="${work}/dstl8-codegraph.json"
+          if ! ( cd "${IN_PATH}" && env -u DSTL8_API_URL -u DSTL8_API_TOKEN \
+                 "${bin}" graph build -o "${artifact}" ${extra[@]+"${extra[@]}"} ); then
+            bail "graph build failed"
+          fi
+          out status dry-run
+          out artifact-path "${artifact}"
+          exit 0
+        fi
+
+        # dstl8 refuses a detached HEAD unless told the branch; checkouts of a
+        # sha or a pull_request merge ref are detached. Name the branch from
+        # the event unless extra-args already does.
+        branch_args=()
+        if [ "$(git -C "${IN_PATH}" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "HEAD" ]; then
+          case " ${IN_EXTRA} " in
+            *" --branch"*) ;;
+            *)
+              if [ -n "${GITHUB_HEAD_REF:-}" ]; then
+                branch_args=(--branch "${GITHUB_HEAD_REF}")
+              else
+                case "${GITHUB_REF:-}" in
+                  refs/heads/*) branch_args=(--branch "${GITHUB_REF#refs/heads/}") ;;
+                esac
+              fi
+              ;;
+          esac
+        fi
+
+        echo "dstl8-codegraph${label}: ${tag} (${os}/${arch}) -> ${DSTL8_API_URL}"
+        res="$(cd "${IN_PATH}" && "${bin}" graph push --json \
+               ${branch_args[@]+"${branch_args[@]}"} ${extra[@]+"${extra[@]}"})"
+        rc=$?
+        [ "${rc}" -eq 0 ] || bail "push failed (dstl8 exit ${rc}); see the log above"
+
+        # The CLI prints one flat JSON object on success, and nothing when it
+        # skips (server already has this graph, or a non-default branch).
+        field() { printf '%s' "${res}" | sed -n "s/.*\"$1\":\"\{0,1\}\([^,\"}]*\).*/\1/p" | head -1; }
+        if [ -z "${res}" ]; then
+          status=skipped
+        elif [ "$(field created)" = "true" ]; then
+          status=pushed
+        elif [ "$(field refreshed)" = "true" ]; then
+          status=refreshed
+        else
+          status=unchanged
+        fi
+        out status "${status}"
+        out repo "$(field repo)"
+        out commit-sha "$(field commit_sha)"
+        echo "dstl8-codegraph${label}: ${status}"
+        exit 0

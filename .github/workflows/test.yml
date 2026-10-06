@@ -1,0 +1,75 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 50
+
+      - name: Build graph (no upload)
+        id: dry
+        uses: ./
+        with:
+          dry-run: "true"
+          fail-on-error: "true"
+          extra-args: --exclude '.github/**'
+
+      - name: Assert dry-run outputs
+        shell: bash
+        env:
+          STATUS: ${{ steps.dry.outputs.status }}
+          CLI: ${{ steps.dry.outputs.cli-version }}
+          ARTIFACT: ${{ steps.dry.outputs.artifact-path }}
+        run: |
+          set -eu
+          [ "${STATUS}" = "dry-run" ] || { echo "status=${STATUS}"; exit 1; }
+          case "${CLI}" in v*) ;; *) echo "cli-version=${CLI}"; exit 1 ;; esac
+          [ -s "${ARTIFACT}" ] || { echo "missing artifact ${ARTIFACT}"; exit 1; }
+
+      - name: Pinned version resolves
+        id: pinned
+        uses: ./
+        with:
+          dry-run: "true"
+          fail-on-error: "true"
+          version: v0.2.10
+
+      - name: Missing credentials warn by default
+        id: soft
+        uses: ./
+
+      - name: Missing credentials fail when asked
+        id: hard
+        continue-on-error: true
+        uses: ./
+        with:
+          fail-on-error: "true"
+
+      - name: Assert failure handling
+        shell: bash
+        env:
+          PINNED: ${{ steps.pinned.outputs.cli-version }}
+          SOFT_STATUS: ${{ steps.soft.outputs.status }}
+          SOFT_OUTCOME: ${{ steps.soft.outcome }}
+          HARD_OUTCOME: ${{ steps.hard.outcome }}
+        run: |
+          set -eu
+          [ "${PINNED}" = "v0.2.10" ] || { echo "pinned=${PINNED}"; exit 1; }
+          [ "${SOFT_STATUS}" = "failed" ] && [ "${SOFT_OUTCOME}" = "success" ] \
+            || { echo "soft: status=${SOFT_STATUS} outcome=${SOFT_OUTCOME}"; exit 1; }
+          [ "${HARD_OUTCOME}" = "failure" ] || { echo "hard outcome=${HARD_OUTCOME}"; exit 1; }
