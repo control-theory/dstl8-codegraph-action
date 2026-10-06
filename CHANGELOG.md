@@ -2,6 +2,11 @@
 
 ## v1.0.1
 
+- Fix: `dry-run` on a detached HEAD (every `pull_request` checkout) failed with
+  "detached HEAD, branch name unavailable". The branch is now taken from the event
+  for `dry-run` as well as for push.
+- `action.yml` description shortened to 110 characters; GitHub Marketplace
+  requires fewer than 125.
 - README: the API URL note now names only the public `https://<org>.app.dstl8.ai`
   host. No change to the action's behavior.
 - Repository: SOC 2 change-management protection on `main` (pull request with one

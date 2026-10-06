@@ -1,7 +1,5 @@
 name: dstl8 code graph push
-description: >
-  Extract your repository's code graph (log sites, symbols, services — metadata
-  only, never source) with the dstl8 CLI and push it to your Dstl8 org.
+description: "Push your repository's code graph to Dstl8: log sites, symbols and services. Metadata only, never source code."
 author: ControlTheory
 branding:
   icon: share-2
@@ -173,18 +171,6 @@ runs:
 
         [ -d "${IN_PATH}" ] || bail "path ${IN_PATH} does not exist (did you run actions/checkout?)"
 
-        if [ "${dry_run}" = "true" ]; then
-          echo "dstl8-codegraph${label}: ${tag} (${os}/${arch}) dry run, nothing will be uploaded"
-          artifact="${work}/dstl8-codegraph.json"
-          if ! ( cd "${IN_PATH}" && env -u DSTL8_API_URL -u DSTL8_API_TOKEN \
-                 "${bin}" graph build -o "${artifact}" ${extra[@]+"${extra[@]}"} ); then
-            bail "graph build failed"
-          fi
-          out status dry-run
-          out artifact-path "${artifact}"
-          exit 0
-        fi
-
         # dstl8 refuses a detached HEAD unless told the branch; checkouts of a
         # sha or a pull_request merge ref are detached. Name the branch from
         # the event unless extra-args already does.
@@ -202,6 +188,19 @@ runs:
               fi
               ;;
           esac
+        fi
+
+        if [ "${dry_run}" = "true" ]; then
+          echo "dstl8-codegraph${label}: ${tag} (${os}/${arch}) dry run, nothing will be uploaded"
+          artifact="${work}/dstl8-codegraph.json"
+          if ! ( cd "${IN_PATH}" && env -u DSTL8_API_URL -u DSTL8_API_TOKEN \
+                 "${bin}" graph build -o "${artifact}" \
+                 ${branch_args[@]+"${branch_args[@]}"} ${extra[@]+"${extra[@]}"} ); then
+            bail "graph build failed"
+          fi
+          out status dry-run
+          out artifact-path "${artifact}"
+          exit 0
         fi
 
         echo "dstl8-codegraph${label}: ${tag} (${os}/${arch}) -> ${DSTL8_API_URL}"
