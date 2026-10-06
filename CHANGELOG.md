@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.0.1
+
+- README: the API URL note now names only the public `https://<org>.app.dstl8.ai`
+  host. No change to the action's behavior.
+- Repository: SOC 2 change-management protection on `main` (pull request with one
+  approving review, no force-push or deletion) and a pull-request template.
+
 ## v1.0.0
 
 - First public release: `dstl8 graph push` from GitHub Actions.
