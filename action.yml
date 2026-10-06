@@ -1,7 +1,5 @@
 name: dstl8 code graph push
-description: >
-  Extract your repository's code graph (log sites, symbols, services — metadata
-  only, never source) with the dstl8 CLI and push it to your Dstl8 org.
+description: "Push your repository's code graph to Dstl8: log sites, symbols and services. Metadata only, never source code."
 author: ControlTheory
 branding:
   icon: share-2

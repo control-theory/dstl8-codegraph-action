@@ -2,6 +2,8 @@
 
 ## v1.0.1
 
+- `action.yml` description shortened to 110 characters; GitHub Marketplace
+  requires fewer than 125.
 - README: the API URL note now names only the public `https://<org>.app.dstl8.ai`
   host. No change to the action's behavior.
 - Repository: SOC 2 change-management protection on `main` (pull request with one
